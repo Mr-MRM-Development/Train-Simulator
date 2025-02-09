@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Train Simulator - Elevated Tracks</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #ui {
+    position: absolute; 
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    padding: 15px;
+    border-radius: 15px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0px 5px 15px rgba(0, 0, 0, 0.5);
+}
+
+button {
+    padding: 12px 20px;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+#hornButton {
+    background: red;
+    color: white;
+    font-size: 20px;
+}
+
+#hornButton:active {
+    background: darkred;
+}
+
+#toggleDirection {
+    background: #444;
+    color: white;
+}
+
+#toggleDirection:active {
+    background: #222;
+}
+
+#toggleCamera {
+    background: #007bff;
+    color: white;
+}
+
+#toggleCamera:active {
+    background: #0056b3;
+}
+
+.slider-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+}
+
+.slider-container label {
+    color: white;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.slider-vertical {
+    writing-mode: bt-lr;
+    appearance: slider-vertical;
+    width: 15px;
+    height: 100px;
+}    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <button id="toggleDirection">Arah: Maju</button>
+        <div class="slider-container">
+            <label>Throttle</label>
+            <input type="range" id="throttleControl" min="0" max="1" step="0.01" value="0">
+        </div>
+        <div class="slider-container">
+            <label>Rem</label>
+            <input type="range" id="brakeControl" min="0" max="1" step="0.01" value="0">
+        </div>
+        <button id="hornButton">🚂 Klakson</button>
+        <button id="toggleCamera">🎥 Toggle Kamera</button>
+    </div>
+
+    <script>
+        let scene, camera, renderer, controls, train;
+        //let trainSpeed = 0, targetSpeed = 0;
+        //let isMovingForward = true;
+        let cameraFollow = true;
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB); // Langit cerah
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 20000);
+            camera.position.set(0, 3, 10);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xffffff, 2);
+            sunLight.position.set(5, 10, 5);
+            scene.add(sunLight);
+
+            // Ground dinaikkan ke y = -0.1
+            const groundGeometry = new THREE.PlaneGeometry(10000, 10000);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0x3A5F0B });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -0.1; 
+            scene.add(ground);
+
+            createTracks();
+
+            const loader = new THREE.GLTFLoader();
+            loader.load('train.glb', function (gltf) {
+                train = gltf.scene;
+                train.position.set(0, -0.3, 0); // Kereta dinaikkan ke y = 0.5
+                scene.add(train);
+                animate();
+            });
+
+           /* document.getElementById("toggleDirection").addEventListener("click", function () {
+                isMovingForward = !isMovingForward;
+                this.innerText = isMovingForward ? "Arah: Maju" : "Arah: Mundur";
+            });*/
+
+            document.getElementById("toggleCamera").addEventListener("click", function () {
+               cameraFollow = !cameraFollow;
+               this.innerText = cameraFollow ? "🎥 Kamera Follow" : "🎥 Kamera Manual";
+           });
+            let listener = new THREE.AudioListener();
+camera.add(listener);
+
+let hornSound = new THREE.Audio(listener);
+let engineSound = new THREE.Audio(listener);
+let brakeSound = new THREE.Audio(listener);
+
+const audioLoader = new THREE.AudioLoader();
+audioLoader.load('horn.mp3', function (buffer) {
+    hornSound.setBuffer(buffer);
+    hornSound.setLoop(false);
+    hornSound.setVolume(1);
+});
+audioLoader.load('engine.mp3', function (buffer) {
+    engineSound.setBuffer(buffer);
+    engineSound.setLoop(true);
+    engineSound.setVolume(0);
+    engineSound.play();
+});
+audioLoader.load('brake.mp3', function (buffer) {
+    brakeSound.setBuffer(buffer);
+    brakeSound.setLoop(false);
+    brakeSound.setVolume(1);
+});
+
+// 🔹 Tombol Klakson
+document.getElementById("hornButton").addEventListener("click", function () {
+    if (hornSound.isPlaying) hornSound.stop();
+    hornSound.play();
+});
+
+// 🔹 Update suara mesin dan rem saat throttle atau rem berubah
+document.getElementById("throttleControl").addEventListener("input", function () {
+    let volume = parseFloat(this.value);
+    engineSound.setVolume(volume);
+});
+
+document.getElementById("brakeControl").addEventListener("input", function () {
+    let brakeForce = parseFloat(this.value);
+    if (brakeForce > 0.2 && !brakeSound.isPlaying) {
+        brakeSound.play();
+    }
+});
+
+// 🔹 Kamera bisa mengikuti kereta atau dikontrol manual
+document.getElementById("toggleCamera").addEventListener("click", function () {
+    cameraFollow = !cameraFollow;
+    this.innerText = cameraFollow ? "🎥 Kamera Follow" : "🎥 Kamera Manual";
+});
+
+// 🔹 Update kamera dalam animasi
+function animate() {
+    requestAnimationFrame(animate);
+    updateTrainMovement();
+
+    if (cameraFollow && train) {
+        let targetPos = new THREE.Vector3(train.position.x, train.position.y + 3, train.position.z + 10);
+        camera.position.lerp(targetPos, 0.1);
+        camera.lookAt(train.position);
+        controls.target.copy(train.position);
+    }
+
+    controls.update();
+    renderer.render(scene, camera);
+}
+            
+            let trainSpeed = 0; // Kecepatan aktual kereta
+let targetSpeed = 0; // Kecepatan yang diinginkan
+let isMovingForward = true; // Arah kereta
+
+// Fungsi untuk memperbarui kecepatan kereta
+function updateTrainMovement() {
+    trainSpeed += (targetSpeed - trainSpeed) * 0.05; // Transisi halus
+
+    if (train) {
+        train.position.z += isMovingForward ? -trainSpeed : trainSpeed; // Maju atau mundur
+    }
+}
+
+// Event listener untuk slider throttle
+document.getElementById("throttleControl").addEventListener("input", function () {
+    targetSpeed = parseFloat(this.value); // Mengatur kecepatan target
+});
+
+// Event listener untuk slider rem
+document.getElementById("brakeControl").addEventListener("input", function () {
+    let brakeForce = parseFloat(this.value);
+    targetSpeed *= (1 - brakeForce); // Mengurangi kecepatan berdasarkan rem
+});
+
+// Tombol untuk mengubah arah maju/mundur
+document.getElementById("toggleDirection").addEventListener("click", function () {
+    isMovingForward = !isMovingForward;
+    this.innerText = isMovingForward ? "Arah: Maju" : "Arah: Mundur";
+});
+
+// Menjalankan fungsi update setiap frame dalam animasi
+function animate() {
+    requestAnimationFrame(animate);
+    updateTrainMovement(); // Memproses pergerakan kereta
+    renderer.render(scene, camera);
+}
+
+            window.addEventListener("resize", () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+        }
+
+        function createTracks() {
+    const railMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
+
+    for (let i = -1; i <= 1; i += 2) {
+        const railGeometry = new THREE.BoxGeometry(0.2, 0.2, 10000); // BoxGeometry untuk rel
+        const rail = new THREE.Mesh(railGeometry, railMaterial);
+        rail.position.set(i * 0.75, 0.2, 0); // Posisi rel dinaikkan ke y = 0
+        rail.rotation.y = Math.PI / 1; // Rotasi 90 derajat agar rel horizontal
+        scene.add(rail);
+    }
+
+    const sleeperMaterial = new THREE.MeshStandardMaterial({ color: 0x8B5A2B });
+
+    for (let j = -5000; j < 5000; j += 2) {
+        const sleeperGeometry = new THREE.BoxGeometry(2.5, 0.2, 0.5);
+        const sleeper = new THREE.Mesh(sleeperGeometry, sleeperMaterial);
+        sleeper.position.set(0, 0.1, j); // Bantalan kayu dinaikkan ke y = 0.1
+        scene.add(sleeper);
+    }
+}
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            trainSpeed += (targetSpeed - trainSpeed) * 0.05;
+
+            if (train) {
+                train.position.z += isMovingForward ? -trainSpeed : trainSpeed;
+
+                if (cameraFollow) {
+                    let targetPos = new THREE.Vector3(train.position.x, train.position.y + 3, train.position.z + 10);
+                    camera.position.lerp(targetPos, 0.1);
+                    camera.lookAt(train.position);
+                    controls.target.copy(train.position);
+                }
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+    
+
+        init();
+    </script>
+
+</body>
+</html>
